@@ -1,0 +1,12 @@
+version: '3'
+services:
+  milkbot:
+    build: .
+    env_file:
+      - ./.env
+  localstack:
+    image: 263652615682.dkr.ecr.eu-central-1.amazonaws.com/milkman/localstack:0.11.5
+    environment:
+      - SERVICES=dynamodb
+    ports:
+      - 4566:4566

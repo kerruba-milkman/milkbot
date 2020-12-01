@@ -1,0 +1,46 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      docker: 18
+    commands:
+       - nohup /usr/local/bin/dockerd --host=unix:///var/run/docker.sock --host=tcp://0.0.0.0:2375 --storage-driver=overlay&
+       - timeout 15 sh -c "until docker info; do echo .; sleep 1; done" 
+  pre_build:
+    commands:
+      - ENV_TAG=prod
+      - PROJECT_NAME=milkbot
+      - NPM_PROJECT_NAME='milkbot'
+      - REPOSITORY_URI=263652615682.dkr.ecr.eu-central-1.amazonaws.com/milkman/${PROJECT_NAME}
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=$ENV_TAG}
+      - CLUSTER_NAME=milkman-prod
+      - SERVICE_NAME=milkbot-prod-service
+      - echo Logging in to Amazon ECR...
+      - aws --version
+      - $(aws ecr get-login --region $AWS_DEFAULT_REGION --no-include-email)
+      - docker run -e SERVICES=dynamodb -p 4566:4566 -d 263652615682.dkr.ecr.eu-central-1.amazonaws.com/milkman/localstack:ci
+      - echo Building $IMAGE_TAG for TRIGGER $CODEBUILD_WEBHOOK_TRIGGER
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - echo Tests are launched during the build
+      - docker build -t $REPOSITORY_URI:$ENV_TAG --network host .
+      - docker tag $REPOSITORY_URI:$ENV_TAG $REPOSITORY_URI:$IMAGE_TAG
+
+      - echo Tagging the image for semver
+      - SEMVER=v$(docker run --rm $REPOSITORY_URI:$IMAGE_TAG npm version | grep $PROJECT_NAME | grep -o "[0-9]\+\.[0-9]\+\.[0-9]\+")
+      - docker tag $REPOSITORY_URI:$ENV_TAG $REPOSITORY_URI:$SEMVER
+
+      - echo Build completed on `date`
+
+      - echo Pushing the Docker images...
+      - docker push $REPOSITORY_URI:$ENV_TAG
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - docker push $REPOSITORY_URI:$SEMVER
+
+
+      - echo $IMAGE_TAG built and pushed
+      - echo Deploying new '${ENV_TAG}' by means of 'ecs update-service'
+      - aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --force-new-deployment
